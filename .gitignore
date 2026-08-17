@@ -1,0 +1,28 @@
+# Downloaded and derived data
+data/
+results/
+
+# Parquet files
+*.pq
+*.parquet
+
+# API keys
+api_key
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Editors
+*.sublime-project
+*.sublime-workspace
+.vscode/
+.idea/
+
+# Local configuration, which holds the observing site
+config.json

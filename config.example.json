@@ -1,0 +1,11 @@
+{
+    "site_lat": 41.6488,
+    "site_lon": -0.8891,
+    "site_eye_height": 1.6,
+    "site_ground_elevation": null,
+    "nominal_time": "2026-08-12 18:30:00",
+    "search_half_window_minutes": 8,
+    "box_margin_lat": 3.5,
+    "box_margin_lon": 4.5,
+    "max_separation_deg": 2.0
+}
