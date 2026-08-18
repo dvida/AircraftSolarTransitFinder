@@ -45,14 +45,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon
 import matplotlib.patheffects as path_effects
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from SolarTransit.ADSBData import loadRegion
-from SolarTransit.Config import (SITE_LAT, SITE_LON, NOMINAL_TIME, RESULTS_DIR, SUBSET_DATA_DIR,
-    MIN_POINTS_PER_FLIGHT, siteElevation)
-from SolarTransit.Conversions import (latLonAlt2ECEF, ecef2LatLonAlt, angularSeparation,
-    slantRange)
-from SolarTransit.Ephemeris import siteLocation, eclipseCircumstances
+from SolarTransit.Config import NOMINAL_TIME, RESULTS_DIR, SUBSET_DATA_DIR, MIN_POINTS_PER_FLIGHT
+from SolarTransit.Conversions import ecef2LatLonAlt, angularSeparation, slantRange
+from SolarTransit.Ephemeris import eclipseCircumstances
 from SolarTransit.Refraction import RefractionTable
 from SolarTransit.TransitSearch import apparentTrack
 from SolarTransit.Trajectory import buildTracks
@@ -403,13 +399,14 @@ def candidateSeries(track, time_ref, t_center, site_ecef, site_elevation_msl, re
 
 
 
-def plotSeparation(series_list, labels, output_path):
+def plotSeparation(series_list, labels, output_path, site):
     """ Plot the angular separation from the centre of the Sun as a function of time.
 
     Arguments:
         series_list: [list of dict] Series computed by candidateSeries.
         labels: [list of str] Labels of the candidates.
         output_path: [str] Path of the image which will be written.
+        site: [ObservingSite] The observing site.
 
     """
 
@@ -434,7 +431,8 @@ def plotSeparation(series_list, labels, output_path):
     ax.set_xlabel("Time from the closest approach (s)")
     ax.set_ylabel("Angular separation from the centre of the Sun (arcmin)")
     ax.set_title("Aircraft passing the apparent position of the Sun\n"
-        "2026 August 12, seen from {:.4f} N, {:.4f} E".format(SITE_LAT, SITE_LON))
+        "{:s}, seen from {:.4f} N, {:.4f} E".format(
+        series_list[0]['times'][0].strftime("%Y %B %d"), site.lat, site.lon))
 
     ax.set_xlim(-60, 60)
     ax.set_ylim(0, 60)
@@ -573,7 +571,7 @@ def plotEclipseView(series, label, output_path, n_silhouettes=7, view=DEFAULT_VI
 
 
 
-def plotMap(series_list, labels, output_path):
+def plotMap(series_list, labels, output_path, site):
     """ Plot a map of the region with the tracks of the candidates and the direction of the Sun.
 
     Arguments:
@@ -581,12 +579,13 @@ def plotMap(series_list, labels, output_path):
             stored under the keys lat and lon.
         labels: [list of str] Labels of the candidates.
         output_path: [str] Path of the image which will be written.
+        site: [ObservingSite] The observing site.
 
     """
 
     fig, ax = plt.subplots(figsize=(8, 7))
 
-    ax.plot(SITE_LON, SITE_LAT, marker='*', color='red', markersize=14, zorder=5,
+    ax.plot(site.lon, site.lat, marker='*', color='red', markersize=14, zorder=5,
         label="Observing site")
 
     for series, label in zip(series_list, labels):
@@ -600,7 +599,7 @@ def plotMap(series_list, labels, output_path):
             color=ax.lines[-1].get_color())
 
         # Line from the site towards the aircraft at the moment of the closest approach
-        ax.plot([SITE_LON, series['lon'][i_min]], [SITE_LAT, series['lat'][i_min]],
+        ax.plot([site.lon, series['lon'][i_min]], [site.lat, series['lat'][i_min]],
             color='gray', linestyle=':', linewidth=0.8, zorder=1)
 
 
@@ -609,7 +608,7 @@ def plotMap(series_list, labels, output_path):
     ax.set_title("Ground tracks of the candidates and the lines of sight towards the Sun")
 
     # Keep the aspect ratio correct at this latitude
-    ax.set_aspect(1.0/np.cos(np.radians(SITE_LAT)))
+    ax.set_aspect(1.0/np.cos(np.radians(site.lat)))
 
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
@@ -622,11 +621,114 @@ def plotMap(series_list, labels, output_path):
 
 
 
-if __name__ == "__main__":
+def plotCandidates(df_cand, df_adsb, site, time_ref, view=DEFAULT_VIEW, results_dir=RESULTS_DIR,
+    refraction_table=None):
+    """ Plot a set of candidates, given the table of candidates and the ADS-B reports.
+
+    This is the entry point which the pipeline uses, and which the command line interface of this
+    module wraps.
+
+    Arguments:
+        df_cand: [pandas.DataFrame] Candidates, as written by the transit search.
+        df_adsb: [pandas.DataFrame] ADS-B reports which contain the tracks of the candidates.
+        site: [ObservingSite] The observing site.
+        time_ref: [datetime] Reference time of the tracks.
+
+    Keyword arguments:
+        view: [str] Orientation of the view of the Sun, one of the keys of VIEW_MODES.
+        results_dir: [str] Directory into which the plots are written.
+        refraction_table: [RefractionTable] Table used to apply the refraction. It is computed if
+            it is not given.
+
+    Return:
+        plot_paths: [list of str] Paths of the plots which were written.
+
+    """
+
+    if not len(df_cand):
+        print("No candidates to plot")
+        return []
+
+
+    elevation = site.elevation
+    location = site.astropyLocation()
+    site_ecef = site.ecef()
+
+    if refraction_table is None:
+        print("Building the refraction table...")
+        refraction_table = RefractionTable(elevation)
+
+
+    tracks = {track.flight_id: track for track in buildTracks(df_adsb, time_ref,
+        min_points=MIN_POINTS_PER_FLIGHT)}
+
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+
+    series_list = []
+    labels = []
+    plot_paths = []
+
+    for _, cand in df_cand.iterrows():
+
+        track = tracks.get(cand['flight_id'])
+
+        if track is None:
+            print("The track of {:s} was not found in the data".format(str(cand['callsign'])))
+            continue
+
+
+        t_center = (pd.Timestamp(cand['time_min_sep']).to_pydatetime() - time_ref).total_seconds()
+
+        series = candidateSeries(track, time_ref, t_center, site_ecef, elevation,
+            refraction_table, location)
+
+        series['wingspan'] = track.wingspan
+
+        # Ground track of the aircraft, needed for the map
+        x, y, z = track.positionsECEF(series['t_rel'])
+
+        lat, lon, _ = ecef2LatLonAlt(x, y, z)
+
+        series['lat'] = np.degrees(lat)
+        series['lon'] = np.degrees(lon)
+
+        label = "{:s} ({:s}, {:s})".format(str(cand['callsign']), str(cand['tail_number']),
+            str(cand['aircraft_type_icao']))
+
+        series_list.append(series)
+        labels.append(label)
+
+        # The view of the Sun is plotted separately for every candidate
+        view_path = os.path.join(results_dir, "eclipse_view_{:s}.png".format(
+            str(cand['callsign'])))
+
+        plotEclipseView(series, label, view_path, view=view)
+
+        plot_paths.append(view_path)
+
+
+    if not series_list:
+        return plot_paths
+
+
+    separation_path = os.path.join(results_dir, 'separation.png')
+    map_path = os.path.join(results_dir, 'map.png')
+
+    plotSeparation(series_list, labels, separation_path, site)
+    plotMap(series_list, labels, map_path, site)
+
+    return plot_paths + [separation_path, map_path]
+
+
+
+def main():
+    """ Plot the candidates found by an earlier run of the transit search. """
 
     import argparse
 
-
+    from SolarTransit.Site import ObservingSite
 
 
     ### COMMAND LINE ARGUMENTS ###
@@ -677,76 +779,21 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
-    ### Set up the site ###
+    site = ObservingSite.fromConfig()
 
-    elevation_wgs84 = siteElevation()
-
-    location = siteLocation(SITE_LAT, SITE_LON, elevation_wgs84)
-
-    site_ecef = latLonAlt2ECEF(np.radians(SITE_LAT), np.radians(SITE_LON), elevation_wgs84)
-
-    print("Building the refraction table...")
-    refraction_table = RefractionTable(elevation_wgs84)
-
-    ### ###
-
-
-    ### Load the tracks of the selected candidates ###
-
+    # Load the ADS-B reports which cover the tracks of the selected candidates
     t_beg = df_cand['time_min_sep'].min().to_pydatetime() - datetime.timedelta(minutes=10)
     t_end = df_cand['time_min_sep'].max().to_pydatetime() + datetime.timedelta(minutes=10)
 
-    df = loadRegion(t_beg, t_end, cache_path=cml_args.input)
+    lat_min, lat_max, lon_min, lon_max = site.box()
 
-    time_ref = NOMINAL_TIME
+    df_adsb = loadRegion(t_beg, t_end, lat_min=lat_min, lat_max=lat_max, lon_min=lon_min,
+        lon_max=lon_max, cache_path=cml_args.input)
 
-    tracks = {track.flight_id: track for track in buildTracks(df, time_ref,
-        min_points=MIN_POINTS_PER_FLIGHT)}
-
-    ### ###
+    plotCandidates(df_cand, df_adsb, site, NOMINAL_TIME, view=cml_args.view)
 
 
-    if not os.path.exists(RESULTS_DIR):
-        os.makedirs(RESULTS_DIR)
 
+if __name__ == "__main__":
 
-    series_list = []
-    labels = []
-
-    for _, cand in df_cand.iterrows():
-
-        track = tracks.get(cand['flight_id'])
-
-        if track is None:
-            print("The track of {:s} was not found in the data".format(str(cand['callsign'])))
-            continue
-
-
-        t_center = (cand['time_min_sep'].to_pydatetime() - time_ref).total_seconds()
-
-        series = candidateSeries(track, time_ref, t_center, site_ecef, elevation_wgs84,
-            refraction_table, location)
-
-        series['wingspan'] = track.wingspan
-
-        # Ground track of the aircraft, needed for the map
-        x, y, z = track.positionsECEF(series['t_rel'])
-
-        lat, lon, _ = ecef2LatLonAlt(x, y, z)
-
-        series['lat'] = np.degrees(lat)
-        series['lon'] = np.degrees(lon)
-
-        label = "{:s} ({:s}, {:s})".format(str(cand['callsign']), str(cand['tail_number']),
-            str(cand['aircraft_type_icao']))
-
-        series_list.append(series)
-        labels.append(label)
-
-        # The view of the eclipsed Sun is plotted separately for every candidate
-        plotEclipseView(series, label, os.path.join(RESULTS_DIR, "eclipse_view_{:s}.png".format(
-            str(cand['callsign']))), view=cml_args.view)
-
-
-    plotSeparation(series_list, labels, os.path.join(RESULTS_DIR, 'separation.png'))
-    plotMap(series_list, labels, os.path.join(RESULTS_DIR, 'map.png'))
+    main()

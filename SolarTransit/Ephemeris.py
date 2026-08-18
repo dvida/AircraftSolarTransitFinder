@@ -240,12 +240,14 @@ def eclipseCircumstances(times, location):
 
 
 
-if __name__ == "__main__":
+def main():
+    """ Print the position of the Sun and the circumstances of the eclipse at the site. """
 
     import argparse
     import datetime
 
-    from SolarTransit.Config import SITE_LAT, SITE_LON, NOMINAL_TIME, siteElevation
+    from SolarTransit.Config import NOMINAL_TIME
+    from SolarTransit.Site import ObservingSite
 
 
     ### COMMAND LINE ARGUMENTS ###
@@ -265,11 +267,11 @@ if __name__ == "__main__":
     #########################
 
 
-    elevation = siteElevation()
+    site = ObservingSite.fromConfig()
 
-    location = siteLocation(SITE_LAT, SITE_LON, elevation)
+    location = site.astropyLocation()
 
-    print("Site: {:.6f} N, {:.6f} E, {:.1f} m (WGS84)".format(SITE_LAT, SITE_LON, elevation))
+    print("Site: {:.6f} N, {:.6f} E, {:.1f} m (WGS84)".format(site.lat, site.lon, site.elevation))
 
     # Generate the times of the printout
     n_steps = int(2*cml_args.window*60/cml_args.step) + 1
@@ -287,3 +289,9 @@ if __name__ == "__main__":
         print("{:<21s} {:9.3f} {:8.3f} {:9.3f} {:8.3f} {:9.4f} {:11.2f}%".format(str(t),
             circ['sun_azim'][i], circ['sun_alt'][i], circ['moon_azim'][i], circ['moon_alt'][i],
             circ['separation'][i], 100*circ['obscuration'][i]))
+
+
+
+if __name__ == "__main__":
+
+    main()

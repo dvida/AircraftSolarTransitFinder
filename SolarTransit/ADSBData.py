@@ -243,7 +243,8 @@ def loadRegion(dt_beg, dt_end, lat_min=BOX_LAT_MIN, lat_max=BOX_LAT_MAX, lon_min
 
 
 
-if __name__ == "__main__":
+def main():
+    """ Download the data around the configured event and extract the region around the site. """
 
     import argparse
 
@@ -276,3 +277,9 @@ if __name__ == "__main__":
     print("Loading ADS-B data from {:s} to {:s} UTC".format(str(dt_beg), str(dt_end)))
 
     loadRegion(dt_beg, dt_end, cache_path=cml_args.output)
+
+
+
+if __name__ == "__main__":
+
+    main()

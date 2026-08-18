@@ -32,12 +32,9 @@ routines. The result is cached in a JSON file so that the search does not depend
 from __future__ import print_function, division, absolute_import, unicode_literals
 
 import os
-import sys
 import json
 
 import requests
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from SolarTransit.Config import SITE_LAT, SITE_LON, SITE_ELEVATION_CACHE
 
@@ -134,6 +131,89 @@ def geoidUndulation(lat, lon):
 
 
 
+def cacheKey(lat, lon):
+    """ Key under which the elevation of a site is stored in the cache.
+
+    Arguments:
+        lat: [float] Latitude (deg, +north).
+        lon: [float] Longitude (deg, +east).
+
+    Return:
+        key: [str] Key of the site.
+
+    """
+
+    return "{:.5f},{:.5f}".format(lat, lon)
+
+
+
+def readElevationCache(lat, lon, cache_path=None):
+    """ Read the cached elevation of a site.
+
+    The cache holds an entry per site, so switching between sites does not force a new lookup.
+
+    Arguments:
+        lat: [float] Latitude (deg, +north).
+        lon: [float] Longitude (deg, +east).
+
+    Keyword arguments:
+        cache_path: [str] Path of the JSON cache file.
+
+    Return:
+        info: [dict or None] The cached entry, or None if the site is not in the cache.
+
+    """
+
+    if (cache_path is None) or (not os.path.isfile(cache_path)):
+        return None
+
+
+    try:
+        with open(cache_path) as f:
+            cache = json.load(f)
+
+    except ValueError:
+        return None
+
+
+    return cache.get(cacheKey(lat, lon))
+
+
+
+def writeElevationCache(info, cache_path):
+    """ Add the elevation of a site to the cache, keeping the entries of the other sites.
+
+    Arguments:
+        info: [dict] Result of the lookup, as returned by siteElevationLookup.
+        cache_path: [str] Path of the JSON cache file.
+
+    """
+
+    cache = {}
+
+    if os.path.isfile(cache_path):
+
+        try:
+            with open(cache_path) as f:
+                cache = json.load(f)
+
+        except ValueError:
+            cache = {}
+
+
+    cache[cacheKey(info['latitude'], info['longitude'])] = info
+
+    cache_dir = os.path.dirname(cache_path)
+
+    if cache_dir and (not os.path.exists(cache_dir)):
+        os.makedirs(cache_dir)
+
+
+    with open(cache_path, 'w') as f:
+        json.dump(cache, f, indent=4, sort_keys=True)
+
+
+
 def siteElevationLookup(lat, lon, cache_path=None):
     """ Look up the elevation of the site above the WGS84 ellipsoid and cache the result.
 
@@ -184,13 +264,7 @@ def siteElevationLookup(lat, lon, cache_path=None):
 
     if cache_path is not None:
 
-        cache_dir = os.path.dirname(cache_path)
-
-        if cache_dir and (not os.path.exists(cache_dir)):
-            os.makedirs(cache_dir)
-
-        with open(cache_path, 'w') as f:
-            json.dump(info, f, indent=4)
+        writeElevationCache(info, cache_path)
 
         print("Cached to: {:s}".format(cache_path))
 
@@ -199,7 +273,8 @@ def siteElevationLookup(lat, lon, cache_path=None):
 
 
 
-if __name__ == "__main__":
+def main():
+    """ Look up the elevation of the site given on the command line. """
 
     import argparse
 
@@ -222,3 +297,9 @@ if __name__ == "__main__":
 
 
     siteElevationLookup(cml_args.lat, cml_args.lon, cache_path=SITE_ELEVATION_CACHE)
+
+
+
+if __name__ == "__main__":
+
+    main()

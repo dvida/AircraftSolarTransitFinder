@@ -40,12 +40,11 @@ import numpy as np
 import pandas as pd
 
 from SolarTransit.ADSBData import loadRegion
-from SolarTransit.Config import (SITE_LAT, SITE_LON, NOMINAL_TIME, SEARCH_HALF_WINDOW,
-    SEARCH_TIME_STEP, MAX_SEPARATION_DEG, BARO_ALTITUDE_SIGMA, ADSB_POSITION_SIGMA,
-    SITE_ELEVATION_SIGMA, MIN_POINTS_PER_FLIGHT, MAX_USABLE_GAP, RESULTS_DIR, SUBSET_DATA_DIR,
-    siteElevation)
-from SolarTransit.Conversions import latLonAlt2ECEF, ECEF2AltAz, angularSeparation, slantRange
-from SolarTransit.Ephemeris import siteLocation, eclipseCircumstances
+from SolarTransit.Config import (NOMINAL_TIME, SEARCH_HALF_WINDOW, SEARCH_TIME_STEP,
+    MAX_SEPARATION_DEG, BARO_ALTITUDE_SIGMA, ADSB_POSITION_SIGMA, SITE_ELEVATION_SIGMA,
+    MIN_POINTS_PER_FLIGHT, MAX_USABLE_GAP, RESULTS_DIR, SUBSET_DATA_DIR)
+from SolarTransit.Conversions import ECEF2AltAz, angularSeparation, slantRange
+from SolarTransit.Ephemeris import eclipseCircumstances
 from SolarTransit.Refraction import RefractionTable
 from SolarTransit.Trajectory import buildTracks
 
@@ -318,6 +317,113 @@ def searchTransits(df, location, site_ecef, site_elevation_msl, refraction_table
 
 
 
+def runSearch(site, nominal_time, half_window, max_separation=MAX_SEPARATION_DEG,
+    time_step=SEARCH_TIME_STEP, subset_path=None, data_dir=None, refraction_table=None):
+    """ Load the data and search for aircraft in front of the Sun.
+
+    This is the entry point which the pipeline uses. It resolves the elevation of the site,
+    downloads and subsets the ADS-B telemetry, builds the refraction table and runs the search.
+
+    Arguments:
+        site: [ObservingSite] The observing site.
+        nominal_time: [datetime] Middle of the searched time window, UTC.
+        half_window: [timedelta] Half width of the searched time window.
+
+    Keyword arguments:
+        max_separation: [float] Report the aircraft which came closer than this to the centre of
+            the Sun (deg).
+        time_step: [float] Time step of the search (s).
+        subset_path: [str] Path of the regional subset of the telemetry. It is written on the
+            first run and read on the later ones.
+        data_dir: [str] Directory in which the raw hourly files are cached.
+        refraction_table: [RefractionTable] Table used to apply the refraction. It is computed if
+            it is not given.
+
+    Return:
+        (candidates, df_adsb, refraction_table): [tuple] Ranked candidates, the ADS-B reports
+            which were searched, and the refraction table which was used.
+
+    """
+
+    t_beg = nominal_time - half_window
+    t_end = nominal_time + half_window
+
+    print("Searching from {:s} to {:s} UTC".format(str(t_beg), str(t_end)))
+
+    # Make sure that the elevation of the site is known before anything else is done
+    site.resolveElevation()
+
+    print("Site: {:.6f} N, {:.6f} E, {:.1f} m above the WGS84 ellipsoid".format(site.lat, site.lon,
+        site.elevation))
+
+
+    ### Load the data ###
+
+    lat_min, lat_max, lon_min, lon_max = site.box()
+
+    load_kwargs = {'lat_min': lat_min, 'lat_max': lat_max, 'lon_min': lon_min,
+        'lon_max': lon_max, 'cache_path': subset_path}
+
+    if data_dir is not None:
+        load_kwargs['data_dir'] = data_dir
+
+
+    df_adsb = loadRegion(t_beg - datetime.timedelta(seconds=TRACK_TIME_MARGIN),
+        t_end + datetime.timedelta(seconds=TRACK_TIME_MARGIN), **load_kwargs)
+
+    ### ###
+
+
+    if refraction_table is None:
+        print("Building the refraction table...")
+        refraction_table = RefractionTable(site.elevation)
+
+
+    ### Search ###
+
+    n_grid = int((t_end - t_beg).total_seconds()/time_step) + 1
+
+    times_grid = np.array([t_beg + datetime.timedelta(seconds=i*time_step)
+        for i in range(n_grid)])
+
+    candidates, _, _ = searchTransits(df_adsb, site.astropyLocation(), site.ecef(),
+        site.elevation, refraction_table, times_grid, max_separation=max_separation)
+
+    print("Found {:d} aircraft within {:.2f} deg of the centre of the Sun".format(len(candidates),
+        max_separation))
+
+    ### ###
+
+    return candidates, df_adsb, refraction_table
+
+
+
+def writeCandidates(candidates, results_dir=RESULTS_DIR, file_name='candidates.csv'):
+    """ Write the ranked candidates into a CSV file.
+
+    Arguments:
+        candidates: [list of dict] Ranked candidates.
+
+    Keyword arguments:
+        results_dir: [str] Directory into which the table is written.
+        file_name: [str] Name of the file.
+
+    Return:
+        csv_path: [str] Path of the file which was written.
+
+    """
+
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+    csv_path = os.path.join(results_dir, file_name)
+
+    pd.DataFrame(candidates).to_csv(csv_path, index=False)
+
+    return csv_path
+
+
+
 def printCandidates(candidates, n_print=10):
     """ Print a summary table of the candidates.
 
@@ -355,9 +461,12 @@ def printCandidates(candidates, n_print=10):
 
 
 
-if __name__ == "__main__":
+def main():
+    """ Search for transits using the site and the time from the configuration. """
 
     import argparse
+
+    from SolarTransit.Site import ObservingSite
 
 
     ### COMMAND LINE ARGUMENTS ###
@@ -386,75 +495,25 @@ if __name__ == "__main__":
     #########################
 
 
-    if not os.path.exists(RESULTS_DIR):
-        os.makedirs(RESULTS_DIR)
-
+    site = ObservingSite.fromConfig()
 
     half_window = datetime.timedelta(minutes=cml_args.window)
 
-    t_beg = NOMINAL_TIME - half_window
-    t_end = NOMINAL_TIME + half_window
-
-    print("Searching from {:s} to {:s} UTC".format(str(t_beg), str(t_end)))
-
-
-    ### Load the data ###
-
-    df = loadRegion(t_beg - datetime.timedelta(seconds=TRACK_TIME_MARGIN),
-        t_end + datetime.timedelta(seconds=TRACK_TIME_MARGIN), cache_path=cml_args.input)
-
-    ### ###
-
-
-    ### Set up the site ###
-
-    elevation_wgs84 = siteElevation()
-
-    location = siteLocation(SITE_LAT, SITE_LON, elevation_wgs84)
-
-    site_ecef = latLonAlt2ECEF(np.radians(SITE_LAT), np.radians(SITE_LON), elevation_wgs84)
-
-    print("Site: {:.6f} N, {:.6f} E, {:.1f} m (WGS84)".format(SITE_LAT, SITE_LON, elevation_wgs84))
-
-    # Height above sea level, used for the refraction. The difference between the ellipsoidal and
-    # the orthometric height is negligible for the refraction.
-    site_elevation_msl = elevation_wgs84
-
-    print("Building the refraction table...")
-    refraction_table = RefractionTable(site_elevation_msl)
-
-    ### ###
-
-
-    ### Search ###
-
-    n_grid = int((t_end - t_beg).total_seconds()/SEARCH_TIME_STEP) + 1
-
-    times_grid = np.array([t_beg + datetime.timedelta(seconds=i*SEARCH_TIME_STEP)
-        for i in range(n_grid)])
-
-    candidates, eph, tracks = searchTransits(df, location, site_ecef, site_elevation_msl,
-        refraction_table, times_grid, max_separation=cml_args.sep)
-
-    print("Found {:d} aircraft within {:.2f} deg of the centre of the Sun".format(len(candidates),
-        cml_args.sep))
-
-    ### ###
-
-
-    ### Save the results ###
+    candidates, df_adsb, refraction_table = runSearch(site, NOMINAL_TIME, half_window,
+        max_separation=cml_args.sep, subset_path=cml_args.input)
 
     printCandidates(candidates, n_print=cml_args.nprint)
 
     if candidates:
 
-        df_cand = pd.DataFrame(candidates)
-
-        csv_path = os.path.join(RESULTS_DIR, 'candidates.csv')
-        df_cand.to_csv(csv_path, index=False)
+        csv_path = writeCandidates(candidates, RESULTS_DIR)
 
         print()
         print("Ranked candidates written to: {:s}".format(csv_path))
-        print("Run Utils/PlotTransits.py to plot the best candidates.")
+        print("Run PlotTransits to plot the best candidates.")
 
-    ### ###
+
+
+if __name__ == "__main__":
+
+    main()

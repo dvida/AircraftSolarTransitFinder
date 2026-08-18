@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AircraftSolarTransitFinder"
+version = "1.0.0"
+description = "Identify the aircraft which crossed the apparent disk of the Sun, from historical ADS-B data"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{name = "Denis Vida"}]
+keywords = ["ADS-B", "astronomy", "aircraft", "solar transit", "eclipse", "refraction"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Intended Audience :: Science/Research",
+    ]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",
+    "requests",
+    "astropy",
+    "jplephem",
+    "matplotlib",
+    "pyproj",
+    ]
+
+[project.urls]
+Homepage = "https://github.com/dvida/AircraftSolarTransitFinder"
+
+[project.scripts]
+# The whole analysis in one call
+solar-transit = "SolarTransit.Pipeline:main"
+
+# The individual steps
+solar-transit-elevation = "SolarTransit.SiteElevation:main"
+solar-transit-fetch = "SolarTransit.ADSBData:main"
+solar-transit-ephemeris = "SolarTransit.Ephemeris:main"
+solar-transit-search = "SolarTransit.TransitSearch:main"
+solar-transit-plot = "SolarTransit.PlotTransits:main"
+
+[tool.setuptools]
+packages = ["SolarTransit"]
