@@ -13,6 +13,19 @@ written to identify aircraft seen in front of the eclipsed Sun during the total 
 *The worked example below, drawn as it appears in the eyepiece of a telescope. The aircraft is
 drawn to scale: 63 arcsec across, against a solar disk 31.6 arcmin wide.*
 
+## What you need
+
+Everything here runs on free software, but the analysis is only as good as the archive of ADS-B
+positions behind it, and that is the one thing which is not simply downloadable by everyone.
+
+The built in downloader uses the [Contrails.org ADS-B API](https://apidocs.contrails.org/notebooks/adsb_api.html),
+which serves Spire Aviation telemetry. There is no self service signup for it: a key is issued on
+request, through the "Request Access" link in its documentation, and it is aimed at aviation and
+contrail research. **If you do not have such a key, the tool still works**, because the search
+takes a table of positions from any source. Openly licensed archives which need no key at all are
+listed in [Where to get the data](#where-to-get-the-data), and what the search expects of them is
+in [Using another source](#using-another-source).
+
 ## What it does
 
 1. Downloads historical ADS-B telemetry for the hours around the event and keeps only the reports
@@ -92,8 +105,7 @@ Anything which is not given on the command line falls back to the configuration.
 
 ## Configuration
 
-The data come from the [Contrails.org ADS-B API](https://apidocs.contrails.org/notebooks/adsb_api.html),
-which serves Spire Aviation telemetry. The key is never stored in the repository. Provide it in the
+If you use the built in downloader, its key is never stored in the repository. Provide it in the
 environment:
 
 ```bash
@@ -116,6 +128,56 @@ which is not tracked by git. Copy `config.example.json` and edit it:
 
 Anything which is not in `config.json` falls back to the defaults in `SolarTransit/Config.py`.
 If `site_ground_elevation` is not given, it is looked up in a digital elevation model.
+
+## Where to get the data
+
+| Source | Cost | Access | What it gives |
+|---|---|---|---|
+| [Contrails.org API](https://apidocs.contrails.org/notebooks/adsb_api.html) (Spire) | free | key issued on request | One hour of global telemetry per call, about 60 MB of parquet. Roughly one position per 30 s, barometric altitude only. This is what the built in downloader speaks. |
+| [adsb.lol globe history](https://www.adsb.lol/docs/open-data/historical/) | free | no account at all | A daily dump of every trace the network saw, published as GitHub releases under ODbL 1.0. About 3 GB for a day of the whole globe. |
+| [OpenSky Network](https://opensky-network.org/data/scientific) | free | application, reviewed | State vectors back to 2013 through their Trino interface. Granted to university, governmental and aviation authority researchers, so it is a good route for academic work and no route at all for a casual question. |
+| ADS-B Exchange, Flightradar24 | paid | commercial licence | Historical feeds with wide coverage. |
+
+**The open dump is not a consolation prize.** The adsb.lol traces come from
+[readsb](https://github.com/wiedehopf/readsb/blob/dev/README-json.md), whose trace entries carry
+the geometric altitude alongside the barometric one, and land every five to fifteen seconds rather
+than every thirty. Both of those attack the two largest terms in the error budget above: a
+geometric altitude removes the 0.14 deg barometric uncertainty almost entirely, and a shorter gap
+between reports shrinks what the interpolation has to invent. The trade is coverage and bulk. The
+traces come from volunteer ground receivers, so they thin out over oceans and empty country, where
+the satellite based Spire feed does not, and you download a few gigabytes for a day of the globe
+instead of 60 MB for an hour.
+
+## Using another source
+
+The search does not care where the positions came from. Hand `runSearch` or `runPipeline` a
+dataframe and nothing is downloaded:
+
+```python
+import datetime
+from SolarTransit import ObservingSite, runSearch
+
+df = myLoaderForSomeOtherArchive(...)   # see the columns below
+
+site = ObservingSite(41.6488, -0.8891)
+
+candidates, _, _ = runSearch(site, datetime.datetime(2026, 8, 12, 18, 30),
+    datetime.timedelta(minutes=12), df_adsb=df)
+```
+
+Five columns are required:
+
+| Column | Meaning |
+|---|---|
+| `timestamp` | Time of the report, UTC, timezone naive |
+| `latitude`, `longitude` | Position of the aircraft (deg), WGS84 |
+| `altitude_baro` | Barometric altitude (ft) |
+| `flight_id` | Anything which is constant along one flight and unique to it |
+
+Everything else is optional and only names the aircraft in the results: `callsign`,
+`tail_number`, `icao_address`, `flight_number`, `aircraft_type_icao`, `airline_iata`,
+`departure_airport_icao`, `arrival_airport_icao`. The type designator is worth providing, because
+the wingspan of the type sets the angular size which is drawn and reported.
 
 ## The steps on their own
 

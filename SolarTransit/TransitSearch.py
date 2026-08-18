@@ -58,6 +58,10 @@ TRACK_TIME_MARGIN = 300.0
 # Time step at which the ephemeris is computed, and then interpolated to the search grid (s)
 EPHEMERIS_TIME_STEP = 1.0
 
+# Columns which any table of ADS-B reports has to have. Everything else is optional, and is only
+# used to name the aircraft in the results, so telemetry from other sources can be searched too.
+REQUIRED_COLUMNS = ['timestamp', 'latitude', 'longitude', 'altitude_baro', 'flight_id']
+
 # Estimated residual error of the refraction model (deg). The refraction itself is about 0.12 deg
 # at an elevation of 6 deg, and the difference between a standard and a real atmosphere is on the
 # order of ten per cent of that.
@@ -317,8 +321,33 @@ def searchTransits(df, location, site_ecef, site_elevation_msl, refraction_table
 
 
 
+def checkTelemetry(df_adsb):
+    """ Check that a table of ADS-B reports has everything the search needs.
+
+    Only a few columns are needed, so telemetry from any source can be searched. The rest of the
+    columns of the Contrails.org feed are optional, and are only used to name the aircraft in the
+    results.
+
+    Arguments:
+        df_adsb: [pandas.DataFrame] ADS-B reports.
+
+    """
+
+    missing = [column for column in REQUIRED_COLUMNS if column not in df_adsb.columns]
+
+    if missing:
+        raise ValueError("The ADS-B reports are missing the columns: {:s}. The required columns "
+            "are: {:s}".format(", ".join(missing), ", ".join(REQUIRED_COLUMNS)))
+
+
+    if not len(df_adsb):
+        raise ValueError("The table of ADS-B reports is empty")
+
+
+
 def runSearch(site, nominal_time, half_window, max_separation=MAX_SEPARATION_DEG,
-    time_step=SEARCH_TIME_STEP, subset_path=None, data_dir=None, refraction_table=None):
+    time_step=SEARCH_TIME_STEP, subset_path=None, data_dir=None, refraction_table=None,
+    df_adsb=None):
     """ Load the data and search for aircraft in front of the Sun.
 
     This is the entry point which the pipeline uses. It resolves the elevation of the site,
@@ -338,6 +367,10 @@ def runSearch(site, nominal_time, half_window, max_separation=MAX_SEPARATION_DEG
         data_dir: [str] Directory in which the raw hourly files are cached.
         refraction_table: [RefractionTable] Table used to apply the refraction. It is computed if
             it is not given.
+        df_adsb: [pandas.DataFrame] ADS-B reports to search. If given, nothing is downloaded, so
+            data from any other source can be used. The columns timestamp, latitude, longitude,
+            altitude_baro and flight_id are required, the rest are only used to name the
+            aircraft.
 
     Return:
         (candidates, df_adsb, refraction_table): [tuple] Ranked candidates, the ADS-B reports
@@ -359,17 +392,26 @@ def runSearch(site, nominal_time, half_window, max_separation=MAX_SEPARATION_DEG
 
     ### Load the data ###
 
-    lat_min, lat_max, lon_min, lon_max = site.box()
+    if df_adsb is None:
 
-    load_kwargs = {'lat_min': lat_min, 'lat_max': lat_max, 'lon_min': lon_min,
-        'lon_max': lon_max, 'cache_path': subset_path}
+        lat_min, lat_max, lon_min, lon_max = site.box()
 
-    if data_dir is not None:
-        load_kwargs['data_dir'] = data_dir
+        load_kwargs = {'lat_min': lat_min, 'lat_max': lat_max, 'lon_min': lon_min,
+            'lon_max': lon_max, 'cache_path': subset_path}
+
+        if data_dir is not None:
+            load_kwargs['data_dir'] = data_dir
 
 
-    df_adsb = loadRegion(t_beg - datetime.timedelta(seconds=TRACK_TIME_MARGIN),
-        t_end + datetime.timedelta(seconds=TRACK_TIME_MARGIN), **load_kwargs)
+        df_adsb = loadRegion(t_beg - datetime.timedelta(seconds=TRACK_TIME_MARGIN),
+            t_end + datetime.timedelta(seconds=TRACK_TIME_MARGIN), **load_kwargs)
+
+
+    else:
+        checkTelemetry(df_adsb)
+
+        print("Searching {:d} given ADS-B reports from {:d} flights".format(len(df_adsb),
+            df_adsb['flight_id'].nunique()))
 
     ### ###
 

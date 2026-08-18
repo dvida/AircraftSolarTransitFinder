@@ -106,7 +106,8 @@ def summarizeSun(site, nominal_time):
 
 def runPipeline(site, nominal_time, half_window=SEARCH_HALF_WINDOW,
     max_separation=MAX_SEPARATION_DEG, results_dir=RESULTS_DIR, subset_path=None,
-    data_dir=RAW_DATA_DIR, make_plots=True, n_plot=3, view=DEFAULT_VIEW, n_print=10):
+    data_dir=RAW_DATA_DIR, make_plots=True, n_plot=3, view=DEFAULT_VIEW, n_print=10,
+    df_adsb=None):
     """ Run the whole analysis, from the download of the data to the plots.
 
     Arguments:
@@ -125,6 +126,8 @@ def runPipeline(site, nominal_time, half_window=SEARCH_HALF_WINDOW,
         n_plot: [int] Number of the best candidates which are plotted.
         view: [str] Orientation of the view of the Sun, one of the keys of VIEW_MODES.
         n_print: [int] Number of candidates which are printed.
+        df_adsb: [pandas.DataFrame] ADS-B reports to search. If given, nothing is downloaded, so
+            telemetry from any other source can be used.
 
     Return:
         results: [dict] The candidates, the path of the table, the paths of the plots and the
@@ -139,7 +142,8 @@ def runPipeline(site, nominal_time, half_window=SEARCH_HALF_WINDOW,
     ### Search ###
 
     candidates, df_adsb, refraction_table = runSearch(site, nominal_time, half_window,
-        max_separation=max_separation, subset_path=subset_path, data_dir=data_dir)
+        max_separation=max_separation, subset_path=subset_path, data_dir=data_dir,
+        df_adsb=df_adsb)
 
     ### ###
 
